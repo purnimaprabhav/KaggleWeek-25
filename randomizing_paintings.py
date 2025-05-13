@@ -1,147 +1,128 @@
 import time
 import random
-from typing import List, Dict, Set
+from pathlib import Path
 
-def timeit(func):
-    def wrapper(*args, **kwargs):
-        start = time.time()
-        result = func(*args, **kwargs)
-        elapsed = time.time() - start
-        print(f"[{func.__name__}] executed in {elapsed:.4f} seconds")
-        return result
-    return wrapper
-
-@timeit
-def parse_input(file_path: str) -> List[Dict]:
-    paintings = []
-    with open(file_path, 'r', encoding='utf-8') as f:
-        n = int(f.readline())
-        for idx in range(n):
-            line = f.readline().strip()
-            if not line:
-                continue
-            parts = line.split()
-            orientation = parts[0]
-            tag_count = int(parts[1])
+def parse_input_file(filepath):
+    """Reads the painting data from the given file."""
+    painting_list = []
+    with open(filepath, 'r') as file:
+        total_paintings = int(file.readline().strip())
+        for index in range(total_paintings):
+            parts = file.readline().strip().split()
+            orientation, tag_count = parts[0], int(parts[1])
             tags = set(parts[2:])
-            paintings.append({
-                'id': idx,
-                'type': orientation,
-                'tags': tags
-            })
-    return paintings
+            painting_list.append((index, orientation, tags))
+    return painting_list
 
-@timeit
-def build_frameglasses(paintings: List[Dict]) -> List[Dict]:
-    landscapes = [p for p in paintings if p['type'] == 'L']
-    portraits = [p for p in paintings if p['type'] == 'P']
+def construct_frameglasses(painting_list):
+    """Converts paintings into frameglasses."""
+    results = []
+    landscape = [(idx, tags) for idx, orient, tags in painting_list if orient == 'L']
+    portrait = [(idx, tags) for idx, orient, tags in painting_list if orient == 'P']
 
-    frameglasses = []
+    # Process landscape directly
+    results.extend(([idx], tags) for idx, tags in landscape)
 
-    # Process landscapes
-    for p in landscapes:
-        frameglasses.append({
-            'ids': [p['id']],
-            'tags': p['tags'].copy()
-        })
+    # Pair portrait images
+    for i in range(0, len(portrait) - 1, 2):
+        idx1, tags1 = portrait[i]
+        idx2, tags2 = portrait[i + 1]
+        results.append(([idx1, idx2], tags1 | tags2))
 
-    # Pair portraits
-    i = 0
-    while i + 1 < len(portraits):
-        p1 = portraits[i]
-        p2 = portraits[i + 1]
-        combined_tags = p1['tags'].union(p2['tags'])
-        frameglasses.append({
-            'ids': [p1['id'], p2['id']],
-            'tags': combined_tags
-        })
-        i += 2
+    return results
 
-    # Handle odd portrait
-    if i < len(portraits):
-        p = portraits[i]
-        frameglasses.append({
-            'ids': [p['id']],
-            'tags': p['tags'].copy()
-        })
+def strategy_identity(fgs):
+    return fgs
 
-    return frameglasses
+def strategy_reversed(fgs):
+    return list(reversed(fgs))
 
-def local_satisfaction_score(tags_a: Set[str], tags_b: Set[str]) -> int:
-    common = len(tags_a & tags_b)
-    only_a = len(tags_a - tags_b)
-    only_b = len(tags_b - tags_a)
-    return min(common, only_a, only_b)
-
-def global_satisfaction_score(frames_order: List[Dict]) -> int:
-    score = 0
-    for i in range(len(frames_order) - 1):
-        score += local_satisfaction_score(frames_order[i]['tags'], frames_order[i + 1]['tags'])
-    return score
-
-def order_same(frames: List[Dict]) -> List[Dict]:
-    return frames.copy()
-
-def order_reversed(frames: List[Dict]) -> List[Dict]:
-    return frames[::-1]
-
-def order_random(frames: List[Dict]) -> List[Dict]:
-    shuffled = frames.copy()
+def strategy_shuffle(fgs):
+    shuffled = fgs[:]
     random.shuffle(shuffled)
     return shuffled
 
-def order_by_tag_count(frames: List[Dict]) -> List[Dict]:
-    return sorted(frames, key=lambda x: len(x['tags']))
+def strategy_tagcount(fgs):
+    return sorted(fgs, key=lambda fg: len(fg[1]))
 
-@timeit
-def run_strategies(frameglasses: List[Dict]) -> List[Dict]:
-    strategies = {
-        "original_order": order_same,
-        "reversed_order": order_reversed,
-        "random_order": order_random,
-        "sorted_by_tag_count": order_by_tag_count
-    }
+def output_results(ordered_fgs, filepath):
+    with open(filepath, 'w') as out_file:
+        out_file.write(f"{len(ordered_fgs)}\n")
+        for ids, _ in ordered_fgs:
+            out_file.write(" ".join(map(str, ids)) + "\n")
+
+def compute_local_score(fg1, fg2):
+    tags_a, tags_b = fg1[1], fg2[1]
+    return min(len(tags_a & tags_b), len(tags_a - tags_b), len(tags_b - tags_a))
+
+def compute_total_score(ordered_fgs):
+    return sum(compute_local_score(ordered_fgs[i], ordered_fgs[i + 1]) for i in range(len(ordered_fgs) - 1))
+
+def run_strategies(input_path, output_folder, team_id):
+    input_path = Path(input_path)
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    start = time.time()
+    paintings = parse_input_file(input_path)
+    time_parsing = time.time() - start
+
+    start = time.time()
+    frameglasses = construct_frameglasses(paintings)
+    time_construction = time.time() - start
+
+    strategies = [
+        ("original", strategy_identity),
+        ("reversed", strategy_reversed),
+        ("shuffled", strategy_shuffle),
+        ("tag_sorted", strategy_tagcount),
+    ]
 
     results = []
-    
-    for name, strategy in strategies.items():
+
+    for name, strategy in strategies:
+        t1 = time.time()
         ordered = strategy(frameglasses)
-        score = global_satisfaction_score(ordered)
+        t2 = time.time()
+        score = compute_total_score(ordered)
+        t3 = time.time()
+        output_file = output_folder / f"Team_{team_id}_{name}.txt"
+        output_results(ordered, output_file)
+        t4 = time.time()
+
         results.append({
-            'strategy': name,
-            'order': ordered,
-            'score': score
+            "strategy": name,
+            "score": score,
+            "total_time": (t4 - start),
+            "output": output_file
         })
-        print(f"Strategy: {name:<20} | Score: {score}")
 
-    best_result = max(results, key=lambda x: x['score'])
-    print(f"\nBest strategy: {best_result['strategy']} with score {best_result['score']}")
-    return best_result['order']
+        print(f"Strategy: {name} | Score: {score} | Time: {t4 - start:.4f}s | File: {output_file}")
 
-def write_output(frames_order: List[Dict], output_file: str):
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(f"{len(frames_order)}\n")
-        for frame in frames_order:
-            f.write(' '.join(map(str, frame['ids'])) + '\n')
+    return results
 
 def main():
-    input_file = input("Enter the path to your input file (.txt): ").strip()
-    output_file = input("Enter the desired output file name (e.g., output.txt): ").strip()
+    team_id = "18"
+    
+    # Get input file path directly from user
+    input_file = input("Enter the path to your input file: ").strip()
+    input_path = Path(input_file)
+    
+    if not input_path.exists():
+        print(f"Error: File not found at {input_path}")
+        return
+    
+    # Create output folder based on input file name
+    output_folder = Path("Outputs") / input_path.stem
+    
+    print("\nProcessing file:", input_path)
+    print("Output will be saved to:", output_folder)
+    
+    results = run_strategies(input_path, output_folder, team_id)
 
-    print("\nProcessing input file...")
-    paintings = parse_input(input_file)
-    print(f"Found {len(paintings)} paintings")
+    print("\n--- Summary ---")
+    for res in results:
+        print(f"{res['strategy'].capitalize()}: Score = {res['score']}")
 
-    print("\nBuilding frameglasses...")
-    frameglasses = build_frameglasses(paintings)
-    print(f"Created {len(frameglasses)} frameglasses")
-
-    print("\nEvaluating different ordering strategies...")
-    best_order = run_strategies(frameglasses)
-
-    print(f"\nWriting best solution to {output_file}...")
-    write_output(best_order, output_file)
-    print("Done!")
-
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
