@@ -106,76 +106,8 @@ def order_greedy_sample(slides, sample_size=100, seed=None):
     return ordered
 
 
-import torch
-import random
-from itertools import chain
-
-def order_greedy_gpu(slides, sample_size=None, seed=None):
-    """
-    Hybrid GPU-accelerated greedy selection with chunked scoring:
-    - Constructs tag matrix on CPU to avoid CUDA OOM
-    - Moves only small chunks to GPU for scoring
-    - Supports slide sampling and reproducible randomness
-
-    Args:
-        slides (list): List of slide objects with `.tags` attribute
-        sample_size (int, optional): Number of slides to sample from `slides`. Defaults to None (use all).
-        seed (int, optional): Random seed for reproducibility. Defaults to None.
-    """
-    assert torch.cuda.is_available(), "GPU unavailable or torch not installed"
-
-    if seed is not None:
-        random.seed(seed)
-        torch.manual_seed(seed)
-
-    if sample_size is not None and sample_size < len(slides):
-        slides = random.sample(slides, sample_size)
-
-    # Build tag index mapping
-    tag_set = set(chain.from_iterable(s.tags for s in slides))
-    tag2idx = {tag: i for i, tag in enumerate(tag_set)}
-    num_tags = len(tag2idx)
-    num_slides = len(slides)
-
-    # Construct binary matrix [num_slides x num_tags] on CPU
-    mat = torch.zeros((num_slides, num_tags), dtype=torch.bool, device='cpu')
-    for i, s in enumerate(slides):
-        idxs = [tag2idx[t] for t in s.tags]
-        mat[i, idxs] = True
-
-    remaining = list(range(num_slides))
-
-    # Random initial pick
-    first = random.choice(remaining)
-    ordered_idx = [first]
-    remaining.remove(first)
-
-    # Greedy selection loop
-    batch_size = 1024  # Adjust based on GPU memory
-    while remaining:
-        cur_vec = mat[ordered_idx[-1]].unsqueeze(0).to('cuda')  # [1 x num_tags]
-        scores = []
-
-        for i in range(0, len(remaining), batch_size):
-            batch_idxs = remaining[i:i + batch_size]
-            rem_mat = mat[batch_idxs].to('cuda')  # [B x num_tags]
-
-            common = (cur_vec & rem_mat).sum(dim=1)
-            only_cur = (cur_vec & ~rem_mat).sum(dim=1)
-            only_rem = (~cur_vec & rem_mat).sum(dim=1)
-            score = torch.min(torch.min(common, only_cur), only_rem)
-
-            scores.append(score.cpu())  # Move back to CPU
-
-        all_scores = torch.cat(scores)  # [len(remaining)]
-        best_pos = torch.argmax(all_scores).item()
-        best_slide = remaining.pop(best_pos)
-        ordered_idx.append(best_slide)
-
-    return [slides[i] for i in ordered_idx]
 
 
-"""
 def order_greedy_gpu(slides):
     assert HAS_GPU, "GPU unavailable or torch not installed"
     # Build tag index mapping
@@ -206,7 +138,6 @@ def order_greedy_gpu(slides):
         best_slide = remaining.pop(best_pos)
         ordered_idx.append(best_slide)
     return [slides[i] for i in ordered_idx]
-"""
 
 def compute_score(slides):
     """

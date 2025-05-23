@@ -1,5 +1,16 @@
+import sys
 import argparse
 import common
+
+# Simulate command-line arguments for this specific job
+sys.argv = [
+    'run2_binary.py',
+    'Data/1_binary_landscapes.txt',
+    'output/output_1_binary_landscapes.txt',
+    '--pair_strategy', 'random',
+    '--sample_size', '8000',
+    '--seed', '42'
+]
 
 def main():
     parser = argparse.ArgumentParser(
@@ -15,7 +26,6 @@ def main():
         '--pair_strategy', choices=['default', 'random', 'best'], default='default',
         help='Strategy for pairing portraits'
     )
-
     parser.add_argument(
         '--sample_size', type=int, default=100,
         help='Candidates to sample at each greedy step'
@@ -33,7 +43,6 @@ def main():
         pair_func = lambda v: common.best_pairing(v, sample_size=100, seed=args.seed)
     else:
         pair_func = None
-
 
     slides, t_pair = common.time_function(
         common.create_slides,
